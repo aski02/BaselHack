@@ -1,5 +1,6 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -7,17 +8,29 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ArrowLeft, Sparkles, BarChart3, Network, Users } from "lucide-react";
 import { DebateSimulation } from "@/components/DebateSimulation";
 import type { ConsensusResult } from "@/components/DebateSimulation";
+import { createMockDebate, getDebateStatus, getConsensusResults, estimateDebateDuration } from "@/lib/api";
+import { toast } from "sonner";
 
 export default function ProjectDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<ConsensusResult | null>(null);
+  const [debateId, setDebateId] = useState<string | null>(null);
+  const [estimatedTime, setEstimatedTime] = useState<number>(0);
+  const [activeTab, setActiveTab] = useState("clusters");
   const loadingSectionRef = useRef<HTMLDivElement>(null);
   const synthesizeSectionRef = useRef<HTMLDivElement>(null);
 
   // Mock data - in real app would fetch based on id
-  const projectsData: Record<string, any> = {
+  const projectsData: Record<string, {
+    id: string;
+    title: string;
+    goal: string;
+    status: string;
+    ideasCount: number;
+    lastActivity: string;
+  }> = {
     "1": {
       id: "1",
       title: "Green City Basel",
@@ -47,28 +60,98 @@ export default function ProjectDetail() {
   const project = projectsData[id || "1"] || projectsData["1"];
 
   // Handler for starting analysis
-  const handleStartAnalysis = () => {
+  const handleStartAnalysis = async () => {
     if (analysisResult) {
       // Reset and start fresh
       setAnalysisResult(null);
-      setIsAnalyzing(true);
-    } else {
-      setIsAnalyzing(true);
     }
     
-    // Scroll to loading animation after a short delay to ensure it's rendered
-    setTimeout(() => {
-      loadingSectionRef.current?.scrollIntoView({ 
-        behavior: 'smooth', 
-        block: 'start' 
-      });
-    }, 100);
+    setIsAnalyzing(true);
+    setDebateId(null);
+    
+    try {
+      const projectId = id || "1";
+      
+      // Calculate estimated duration dynamically
+      const maxRounds = undefined; // Use backend defaults
+      const maxMessages = undefined; // Use backend defaults
+      const estimatedSeconds = estimateDebateDuration(maxRounds, maxMessages);
+      const estimatedMinutes = Math.ceil(estimatedSeconds / 60);
+      
+      const response = await createMockDebate(projectId, maxRounds, maxMessages);
+      setDebateId(response.debate_id);
+      setEstimatedTime(estimatedSeconds);
+      toast.success(`Debate simulation started - estimated time: ${estimatedMinutes} minute${estimatedMinutes > 1 ? 's' : ''}`);
+      
+      // Scroll to loading animation after a short delay to ensure it's rendered
+      setTimeout(() => {
+        loadingSectionRef.current?.scrollIntoView({ 
+          behavior: 'smooth', 
+          block: 'start' 
+        });
+      }, 100);
+    } catch (error) {
+      console.error("Failed to start debate:", error);
+      toast.error(`Failed to start debate: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setIsAnalyzing(false);
+    }
   };
+
+  // Poll for debate status
+  useEffect(() => {
+    if (!debateId || !isAnalyzing) return;
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const debate = await getDebateStatus(debateId);
+        
+        if (debate.status === "completed") {
+          clearInterval(pollInterval);
+          
+          // Fetch consensus results
+          try {
+            const consensusData = await getConsensusResults(debateId);
+            
+            // Transform backend response to ConsensusResult format
+            const result: ConsensusResult = {
+              score: consensusData.consensus_score,
+              confidence: consensusData.semantic_alignment, // Map semantic_alignment to confidence
+              keyInsights: consensusData.key_insights,
+              keyAlignments: consensusData.key_alignments,
+              proArguments: consensusData.pro_arguments,
+              conArguments: consensusData.con_arguments,
+              semanticAlignment: consensusData.semantic_alignment,
+              agreementRatio: consensusData.agreement_ratio,
+              convergenceScore: consensusData.convergence_score,
+              resolutionRate: consensusData.resolution_rate,
+              sentiment: consensusData.sentiment as "positive" | "neutral" | "negative",
+            };
+            
+            handleAnalysisComplete(result);
+          } catch (error) {
+            console.error("Failed to fetch consensus results:", error);
+            toast.error(`Failed to fetch results: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            setIsAnalyzing(false);
+          }
+        } else if (debate.status === "cancelled" || debate.error_message) {
+          clearInterval(pollInterval);
+          toast.error(`Debate failed: ${debate.error_message || 'Unknown error'}`);
+          setIsAnalyzing(false);
+        }
+      } catch (error) {
+        console.error("Failed to poll debate status:", error);
+        // Continue polling on error (might be transient)
+      }
+    }, 2500); // Poll every 2.5 seconds
+
+    return () => clearInterval(pollInterval);
+  }, [debateId, isAnalyzing]);
 
   // Handler for when analysis completes
   const handleAnalysisComplete = (result: ConsensusResult) => {
     setAnalysisResult(result);
     setIsAnalyzing(false);
+    setDebateId(null);
     
     // Scroll to synthesize section to move the analysis UI to the top
     // Use a small delay to ensure the result is rendered
@@ -139,7 +222,7 @@ export default function ProjectDetail() {
 
         {/* Synthesize Section */}
         <div ref={synthesizeSectionRef} className="mt-8">
-          <Tabs defaultValue="clusters" className="space-y-6">
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
             <TabsList className="grid w-full grid-cols-2">
               <TabsTrigger value="clusters">
                 <Network className="mr-2 h-4 w-4" />
@@ -148,6 +231,13 @@ export default function ProjectDetail() {
               <TabsTrigger value="debate">
                 <Users className="mr-2 h-4 w-4" />
                 Agent Debate
+                {isAnalyzing && (
+                  <motion.span
+                    initial={{ scale: 0 }}
+                    animate={{ scale: 1 }}
+                    className="ml-2 h-2 w-2 rounded-full bg-primary"
+                  />
+                )}
               </TabsTrigger>
             </TabsList>
 
@@ -195,14 +285,17 @@ export default function ProjectDetail() {
               ) : isAnalyzing && !analysisResult ? (
                 <div ref={loadingSectionRef} className="w-full overflow-visible">
                   <DebateSimulation
-                    duration={5000}
+                    key={debateId || "debate-loading"}
+                    duration={0} // No auto-complete, wait for real results
                     autoStart={true}
                     onComplete={handleAnalysisComplete}
+                    processingTime={estimatedTime}
+                    debateId={debateId || undefined}
                   />
                 </div>
               ) : analysisResult ? (
                 <div className="w-full overflow-visible pb-4">
-                  <DebateSimulation result={analysisResult} autoStart={false} />
+                  <DebateSimulation key="debate-result" result={analysisResult} autoStart={false} />
                 </div>
               ) : null}
             </TabsContent>
