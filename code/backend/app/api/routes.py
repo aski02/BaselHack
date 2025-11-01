@@ -1,6 +1,8 @@
 """API routes for submission clustering"""
 
 import logging
+import json
+from pathlib import Path
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from app.schemas import (
     StoreSubmissionsRequest, StoreSubmissionsResponse, ClusterResponse,
@@ -28,7 +30,6 @@ router = APIRouter()
 async def health_check():
     """Health check endpoint"""
     return {"status": "healthy"}
-
 
 @router.post("/projects/{project_id}/submissions", response_model=StoreSubmissionsResponse)
 async def store_submissions_endpoint(project_id: str, request: StoreSubmissionsRequest):
@@ -83,6 +84,83 @@ async def get_clusters(project_id: str):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Clustering failed: {str(e)}")
+
+
+@router.post("/projects/{project_id}/debates/mock", response_model=CreateDebateResponse)
+async def create_mock_debate_endpoint(
+    project_id: str,
+    request: CreateDebateRequest,
+    background_tasks: BackgroundTasks
+):
+    """
+    Start a new debate using mock data from sample_clusters.json.
+    Debate runs asynchronously in the background.
+    """
+    try:
+        # Load sample clusters from JSON file
+        json_path = Path(__file__).parent.parent.parent / "test_data" / "sample_clusters.json"
+        
+        if not json_path.exists():
+            raise HTTPException(
+                status_code=500,
+                detail=f"Sample clusters file not found: {json_path}"
+            )
+        
+        with open(json_path, 'r') as f:
+            data = json.load(f)
+        
+        # Extract clusters as list of submission lists
+        clusters = []
+        for cluster_data in data["clusters"]:
+            clusters.append(cluster_data["submissions"])
+        
+        if not clusters or len(clusters) == 0:
+            raise HTTPException(
+                status_code=500,
+                detail="No clusters found in sample data"
+            )
+        
+        logger.info(f"Loaded {len(clusters)} clusters from sample data")
+        
+        # Create debate
+        debate_id = create_debate(project_id, status="pending")
+        
+        # Start debate in background with error handling
+        def run_debate_with_logging(*args, **kwargs):
+            """Wrapper to log errors from background task"""
+            try:
+                return run_debate(*args, **kwargs)
+            except Exception as e:
+                logger.error(f"Background task error for debate {kwargs.get('debate_id', 'unknown')}: {str(e)}", exc_info=True)
+                raise
+        
+        background_tasks.add_task(
+            run_debate_with_logging,
+            project_id=project_id,
+            debate_id=debate_id,
+            max_rounds=request.max_rounds,
+            max_messages=request.max_messages,
+            clusters=clusters
+        )
+        
+        logger.info(f"Started mock debate {debate_id} for project {project_id} with {len(clusters)} clusters")
+        
+        # Get agents (will be created during debate execution)
+        agents = get_debate_agents(debate_id)
+        
+        debate = get_debate(debate_id)
+        
+        return CreateDebateResponse(
+            debate_id=debate_id,
+            status=debate["status"],
+            agents=[AgentInfo(**agent) for agent in agents],
+            created_at=debate["created_at"]
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create mock debate: {str(e)}")
 
 
 @router.post("/projects/{project_id}/debates", response_model=CreateDebateResponse)
