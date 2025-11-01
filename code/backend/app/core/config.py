@@ -1,5 +1,7 @@
 """Application configuration"""
 
+import os
+
 # Submission Limits
 MAX_SUBMISSIONS = 1000
 MIN_SUBMISSIONS_FOR_CLUSTERING = 2
@@ -12,4 +14,44 @@ KMEANS_N_INIT = 10
 
 # Model Settings
 EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
+
+# OpenAI/CrewAI Settings
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
+OPENAI_TEMPERATURE = float(os.getenv("OPENAI_TEMPERATURE", "0.7"))
+OPENAI_MAX_TOKENS = int(os.getenv("OPENAI_MAX_TOKENS", "2000"))
+
+# Debate Settings
+DEFAULT_MAX_ROUNDS = 10
+DEFAULT_MAX_MESSAGES = 50
+DEFAULT_DEBATE_DURATION_MINUTES = 30
+
+# Orchestrator Intervention Settings
+INTERVENTION_REPETITION_THRESHOLD = 3  # Number of similar messages before intervention
+INTERVENTION_OFF_TOPIC_THRESHOLD = 0.3  # Semantic similarity threshold for off-topic detection
+INTERVENTION_STALEMATE_THRESHOLD = 5  # Number of rounds without progress
+DETECT_ETHICAL_VIOLATIONS = True  # Enable insult/profanity detection
+
+# Consensus Analysis Settings
+CONSENSUS_SEMANTIC_WEIGHT = 0.4
+CONSENSUS_AGREEMENT_WEIGHT = 0.25
+CONSENSUS_CONVERGENCE_WEIGHT = 0.20
+CONSENSUS_RESOLUTION_WEIGHT = 0.15
+
+# Debate Generation Settings
+PERSONA_GENERATION_TEMPERATURE = 0.7
+MAX_SUBMISSIONS_FOR_PERSONA = 5
+DEBATE_CONTEXT_MESSAGE_LIMIT = 8
+AGENT_MESSAGE_MAX_TOKENS_RATIO = 0.5  # Ratio of OPENAI_MAX_TOKENS for agent messages
+AGENT_MESSAGE_MAX_WORDS = 200
+
+# Intervention Similarity Thresholds
+REPETITION_SIMILARITY_THRESHOLD = 0.85
+STALEMATE_SIMILARITY_THRESHOLD = 0.80
+MIN_MESSAGES_FOR_INTERVENTION = 3
+MIN_ROUNDS_FOR_STALEMATE_CHECK = 5
+
+# MongoDB Settings
+MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
+MONGODB_DB_NAME = os.getenv("MONGODB_DB_NAME", "baselhack")
 
