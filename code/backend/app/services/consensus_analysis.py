@@ -52,7 +52,7 @@ def calculate_consensus_score(debate_id: str) -> Dict[str, Any]:
     
     # Calculate final consensus score
     consensus_score = (
-        semantic_alignment * config.CONSENSUS_SEMANTIC_WEIGHT +
+        semantic_alignment * 100 * config.CONSENSUS_SEMANTIC_WEIGHT +
         agreement_ratio * 100 * config.CONSENSUS_AGREEMENT_WEIGHT +
         convergence_score * 100 * config.CONSENSUS_CONVERGENCE_WEIGHT +
         resolution_rate * 100 * config.CONSENSUS_RESOLUTION_WEIGHT
