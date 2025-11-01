@@ -1,15 +1,22 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Brain, TrendingUp, Lightbulb, CheckCircle2, Sparkles, MessageSquare, Zap } from "lucide-react";
+import { Brain, TrendingUp, Lightbulb, CheckCircle2, Sparkles, MessageSquare, Zap, Clock } from "lucide-react";
 
 export interface ConsensusResult {
   score: number;
-  confidence: number;
+  confidence?: number; // Optional for backward compatibility, maps to semantic_alignment
   keyInsights: string[];
+  keyAlignments?: string[];
+  proArguments?: string[];
+  conArguments?: string[];
+  semanticAlignment?: number;
+  agreementRatio?: number;
+  convergenceScore?: number;
+  resolutionRate?: number;
   sentiment: "positive" | "neutral" | "negative";
-  processingTime: number;
+  processingTime?: number; // Optional
 }
 
 interface DebateSimulationProps {
@@ -21,6 +28,10 @@ interface DebateSimulationProps {
   autoStart?: boolean;
   /** Custom result data (if provided, will be used instead of generating mock data) */
   result?: ConsensusResult;
+  /** Estimated processing time in seconds (for display) */
+  processingTime?: number;
+  /** Optional debate ID for session persistence */
+  debateId?: string;
 }
 
 export function DebateSimulation({
@@ -28,24 +39,124 @@ export function DebateSimulation({
   onComplete,
   autoStart = true,
   result: customResult,
+  processingTime,
+  debateId,
 }: DebateSimulationProps) {
   const [isLoading, setIsLoading] = useState(autoStart);
   const [result, setResult] = useState<ConsensusResult | null>(customResult || null);
   const [progress, setProgress] = useState(0);
+  // Use refs to track if loading has started and preserve state across re-renders
+  const loadingStartedRef = useRef(false);
+  const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Create a unique key for this debate session based on props
+  const sessionKey = debateId 
+    ? `debate-loading-${debateId}` 
+    : `debate-loading-${duration}-${processingTime}`;
 
   useEffect(() => {
-    if (!autoStart || customResult) return;
+    // If custom result is provided or autoStart is false, don't start loading
+    if (!autoStart || customResult) {
+      loadingStartedRef.current = false;
+      // Clear session storage when we have a result
+      if (customResult) {
+        sessionStorage.removeItem(sessionKey);
+      }
+      return;
+    }
 
-    // Simulate progress
-    const progressInterval = setInterval(() => {
+    // Check if loading has already started in this session (survives remounts)
+    const hasStarted = sessionStorage.getItem(sessionKey) === 'true';
+    if (hasStarted) {
+      loadingStartedRef.current = true;
+      setIsLoading(true);
+      // Restore progress from session storage if available
+      const savedProgress = sessionStorage.getItem(`${sessionKey}-progress`);
+      if (savedProgress) {
+        const progressValue = parseFloat(savedProgress);
+        if (!isNaN(progressValue)) {
+          setProgress(progressValue);
+        }
+      }
+      
+      // Restart the progress interval if duration is 0 or negative
+      if (duration <= 0) {
+        progressIntervalRef.current = setInterval(() => {
+          setProgress((prev) => {
+            const next = prev >= 90 ? 90 : prev + (90 - prev) * 0.02;
+            sessionStorage.setItem(`${sessionKey}-progress`, next.toString());
+            return next;
+          });
+        }, 2000);
+        return () => {
+          if (progressIntervalRef.current) {
+            clearInterval(progressIntervalRef.current);
+            progressIntervalRef.current = null;
+          }
+        };
+      }
+      
+      // If duration is positive, we shouldn't be restoring (it should have completed)
+      // But if we are restoring, just continue with the interval
+      progressIntervalRef.current = setInterval(() => {
+        setProgress((prev) => {
+          const next = Math.min(prev + 2, 100);
+          sessionStorage.setItem(`${sessionKey}-progress`, next.toString());
+          return next;
+        });
+      }, duration / 50);
+      
+      return () => {
+        if (progressIntervalRef.current) {
+          clearInterval(progressIntervalRef.current);
+          progressIntervalRef.current = null;
+        }
+      };
+    }
+
+    // If loading has already started in this component instance, don't restart it
+    if (loadingStartedRef.current) {
+      return;
+    }
+
+    loadingStartedRef.current = true;
+    sessionStorage.setItem(sessionKey, 'true');
+
+    // If duration is 0 or negative, stay in loading state indefinitely
+    // (waiting for external result via customResult prop)
+    if (duration <= 0) {
+      setIsLoading(true);
+      // More realistic progress: slower increment, cap at 90%
+      progressIntervalRef.current = setInterval(() => {
+        setProgress((prev) => {
+          // Slow exponential progress that approaches 90% asymptotically
+          const next = prev >= 90 ? 90 : prev + (90 - prev) * 0.02;
+          // Persist progress to session storage
+          sessionStorage.setItem(`${sessionKey}-progress`, next.toString());
+          return next;
+        });
+      }, 2000); // Update every 2 seconds
+      return () => {
+        if (progressIntervalRef.current) {
+          clearInterval(progressIntervalRef.current);
+          progressIntervalRef.current = null;
+        }
+      };
+    }
+
+    // Simulate progress for positive duration
+    progressIntervalRef.current = setInterval(() => {
       setProgress((prev) => {
         const next = Math.min(prev + 2, 100);
+        // Persist progress to session storage
+        sessionStorage.setItem(`${sessionKey}-progress`, next.toString());
         return next;
       });
     }, duration / 50);
 
     // Complete simulation after duration
-    const timeout = setTimeout(() => {
+    timeoutRef.current = setTimeout(() => {
       setIsLoading(false);
       const generatedResult: ConsensusResult = {
         score: 87,
@@ -59,22 +170,36 @@ export function DebateSimulation({
         processingTime: duration / 1000,
       };
       setResult(generatedResult);
+      // Clear session storage when completed
+      sessionStorage.removeItem(sessionKey);
+      sessionStorage.removeItem(`${sessionKey}-progress`);
       onComplete?.(generatedResult);
     }, duration);
 
     return () => {
-      clearTimeout(timeout);
-      clearInterval(progressInterval);
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+      if (progressIntervalRef.current) {
+        clearInterval(progressIntervalRef.current);
+        progressIntervalRef.current = null;
+      }
     };
-  }, [duration, onComplete, autoStart, customResult]);
+  }, [duration, onComplete, autoStart, customResult, sessionKey]);
 
   // If custom result is provided, show it immediately
   useEffect(() => {
     if (customResult) {
       setIsLoading(false);
       setResult(customResult);
+      // Reset loading started flag when we receive a result
+      loadingStartedRef.current = false;
+      // Clear session storage when we receive a result
+      sessionStorage.removeItem(sessionKey);
+      sessionStorage.removeItem(`${sessionKey}-progress`);
     }
-  }, [customResult]);
+  }, [customResult, sessionKey]);
 
   return (
     <div className="w-full overflow-visible">
@@ -172,8 +297,13 @@ export function DebateSimulation({
                   {/* Progress Bar */}
                   <div className="w-full max-w-md">
                     <div className="mb-2 flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">Processing ideas...</span>
-                      <span className="font-medium text-foreground">{progress}%</span>
+                      <span className="text-muted-foreground">
+                        {progress < 30 ? "Creating AI agents..." : 
+                         progress < 60 ? "Simulating debate..." : 
+                         progress < 90 ? "Analyzing consensus..." : 
+                         "Finalizing results..."}
+                      </span>
+                      <span className="font-medium text-foreground">{Math.round(progress)}%</span>
                     </div>
                     <div className="h-2 w-full overflow-hidden rounded-full bg-secondary">
                       <motion.div
@@ -188,16 +318,16 @@ export function DebateSimulation({
                   {/* Status Messages */}
                   <div className="mt-6 flex flex-wrap justify-center gap-2">
                     {[
-                      "Reading your ideas",
-                      "Finding patterns",
-                      "Building insights",
+                      "Creating AI agents",
+                      "Running debate simulation",
+                      "Analyzing consensus",
                     ].map((msg, i) => (
                       <motion.div
                         key={msg}
                         initial={{ opacity: 0, scale: 0.8 }}
                         animate={{
-                          opacity: progress > (i + 1) * 30 ? 1 : 0.4,
-                          scale: progress > (i + 1) * 30 ? 1 : 0.9,
+                          opacity: progress > (i + 1) * 25 ? 1 : 0.4,
+                          scale: progress > (i + 1) * 25 ? 1 : 0.9,
                         }}
                         transition={{ duration: 0.3 }}
                       >
@@ -207,6 +337,36 @@ export function DebateSimulation({
                       </motion.div>
                     ))}
                   </div>
+                  
+                  {/* Time estimate */}
+                  {progress < 90 && processingTime !== undefined && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 5 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.3, duration: 0.4 }}
+                      className="mt-6 flex items-center justify-center gap-2"
+                    >
+                      <motion.div
+                        animate={{
+                          scale: [1, 1.05, 1],
+                        }}
+                        transition={{
+                          duration: 2,
+                          repeat: Infinity,
+                          ease: "easeInOut",
+                        }}
+                      >
+                        <Clock className="h-3.5 w-3.5 text-muted-foreground/70" />
+                      </motion.div>
+                      <span className="text-xs text-muted-foreground/80 font-medium">
+                        {processingTime < 120 ? (
+                          <>~{Math.round(processingTime)} seconds</>
+                        ) : (
+                          <>~{Math.ceil(processingTime / 60)} minute{Math.ceil(processingTime / 60) > 1 ? 's' : ''}</>
+                        )}
+                      </span>
+                    </motion.div>
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -273,12 +433,18 @@ export function DebateSimulation({
                         <div className="flex items-center justify-between">
                           <div>
                             <p className="text-sm font-medium text-muted-foreground">
-                              Confidence
+                              {result.semanticAlignment !== undefined ? "Alignment" : "Confidence"}
                             </p>
                             <p className="mt-2 text-3xl font-bold text-foreground">
-                              {result.confidence}%
+                              {result.confidence !== undefined 
+                                ? `${Math.round(result.confidence)}%`
+                                : result.semanticAlignment !== undefined
+                                ? `${Math.round(result.semanticAlignment)}%`
+                                : "N/A"}
                             </p>
-                            <p className="text-xs text-muted-foreground">High reliability</p>
+                            <p className="text-xs text-muted-foreground">
+                              {result.semanticAlignment !== undefined ? "Semantic alignment" : "High reliability"}
+                            </p>
                           </div>
                           <Brain className="h-10 w-10 text-muted-foreground" />
                         </div>
@@ -339,6 +505,74 @@ export function DebateSimulation({
                     </CardContent>
                   </Card>
                 </motion.div>
+
+                {/* Pro Arguments */}
+                {result.proArguments && result.proArguments.length > 0 && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.5 }}
+                  >
+                    <Card className="border-border/50 transition-shadow duration-300 hover:shadow-[0_0_24px_rgba(34,197,94,0.25)]">
+                      <CardHeader>
+                        <CardTitle className="text-base flex items-center gap-2">
+                          <TrendingUp className="h-4 w-4 text-muted-foreground" />
+                          Pro Arguments
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <ul className="space-y-3">
+                          {result.proArguments.map((argument, index) => (
+                            <motion.li
+                              key={index}
+                              initial={{ opacity: 0, x: -10 }}
+                              animate={{ opacity: 1, x: 0 }}
+                              transition={{ delay: 0.6 + index * 0.1 }}
+                              className="flex items-start gap-3 text-sm text-foreground"
+                            >
+                              <div className="mt-1.5 h-1.5 w-1.5 rounded-full bg-green-500" />
+                              <span>{argument}</span>
+                            </motion.li>
+                          ))}
+                        </ul>
+                      </CardContent>
+                    </Card>
+                  </motion.div>
+                )}
+
+                {/* Con Arguments */}
+                {result.conArguments && result.conArguments.length > 0 && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.6 }}
+                  >
+                    <Card className="border-border/50 transition-shadow duration-300 hover:shadow-[0_0_24px_rgba(239,68,68,0.25)]">
+                      <CardHeader>
+                        <CardTitle className="text-base flex items-center gap-2">
+                          <MessageSquare className="h-4 w-4 text-muted-foreground" />
+                          Con Arguments
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <ul className="space-y-3">
+                          {result.conArguments.map((argument, index) => (
+                            <motion.li
+                              key={index}
+                              initial={{ opacity: 0, x: -10 }}
+                              animate={{ opacity: 1, x: 0 }}
+                              transition={{ delay: 0.7 + index * 0.1 }}
+                              className="flex items-start gap-3 text-sm text-foreground"
+                            >
+                              <div className="mt-1.5 h-1.5 w-1.5 rounded-full bg-red-500" />
+                              <span>{argument}</span>
+                            </motion.li>
+                          ))}
+                        </ul>
+                      </CardContent>
+                    </Card>
+                  </motion.div>
+                )}
               </CardContent>
             </Card>
           </motion.div>
