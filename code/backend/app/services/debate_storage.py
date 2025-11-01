@@ -421,14 +421,15 @@ def store_consensus_analysis(
     db = get_database()
     timestamp = datetime.utcnow()
     
+    # Convert numpy types to Python native types for MongoDB
     consensus_doc = {
         "_id": debate_id,
         "debate_id": debate_id,
-        "consensus_score": consensus_score,
-        "semantic_alignment": semantic_alignment,
-        "agreement_ratio": agreement_ratio,
-        "convergence_score": convergence_score,
-        "resolution_rate": resolution_rate,
+        "consensus_score": float(consensus_score),
+        "semantic_alignment": float(semantic_alignment),
+        "agreement_ratio": float(agreement_ratio),
+        "convergence_score": float(convergence_score),
+        "resolution_rate": float(resolution_rate),
         "sentiment": sentiment,
         "calculated_at": timestamp,
     }
