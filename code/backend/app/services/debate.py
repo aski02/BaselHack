@@ -301,7 +301,8 @@ def run_debate(
     project_id: str,
     debate_id: str,
     max_rounds: int = None,
-    max_messages: int = None
+    max_messages: int = None,
+    clusters: Optional[List[List[str]]] = None
 ) -> Dict[str, Any]:
     """
     Run a debate simulation using OpenAI chat completions with message tracking
@@ -311,6 +312,8 @@ def run_debate(
         debate_id: Debate identifier
         max_rounds: Maximum number of rounds (default from config)
         max_messages: Maximum number of messages (default from config)
+        clusters: Optional pre-defined clusters (list of submission lists). If provided, 
+                 skips database fetching and uses these clusters directly.
     
     Returns:
         Dictionary with debate results
@@ -327,24 +330,30 @@ def run_debate(
         # Get clusters for the project
         import numpy as np
         
-        # Get submissions and cluster them
-        from app.services.database import get_submissions
-        logger.info(f"Retrieving submissions for project {project_id}")
-        results = get_submissions(project_id)
-        if not results["ids"]:
-            raise ValueError(f"No submissions found for project {project_id}")
-        
-        logger.info(f"Found {len(results['ids'])} submissions")
-        submissions = results["documents"]
-        embeddings = np.array(results["embeddings"])
-        
-        from app.services.clustering import cluster_submissions
-        logger.info("Clustering submissions...")
-        clusters, num_clusters, _ = cluster_submissions(submissions, embeddings)
-        logger.info(f"Created {num_clusters} clusters from submissions")
-        
-        if not clusters or len(clusters) == 0:
-            raise ValueError(f"No clusters created from submissions. This may indicate all submissions are too similar.")
+        if clusters is not None:
+            # Use provided clusters directly (for mock/testing)
+            logger.info(f"Using {len(clusters)} pre-defined clusters")
+            if not clusters or len(clusters) == 0:
+                raise ValueError("No clusters provided. Cannot create agents from empty clusters.")
+        else:
+            # Get submissions and cluster them from database
+            from app.services.database import get_submissions
+            logger.info(f"Retrieving submissions for project {project_id}")
+            results = get_submissions(project_id)
+            if not results["ids"]:
+                raise ValueError(f"No submissions found for project {project_id}")
+            
+            logger.info(f"Found {len(results['ids'])} submissions")
+            submissions = results["documents"]
+            embeddings = np.array(results["embeddings"])
+            
+            from app.services.clustering import cluster_submissions
+            logger.info("Clustering submissions...")
+            clusters, num_clusters, _ = cluster_submissions(submissions, embeddings)
+            logger.info(f"Created {num_clusters} clusters from submissions")
+            
+            if not clusters or len(clusters) == 0:
+                raise ValueError(f"No clusters created from submissions. This may indicate all submissions are too similar.")
         
         # Create agents from clusters
         logger.info(f"Creating agents from {len(clusters)} clusters...")
@@ -467,7 +476,7 @@ Keep interventions brief and constructive."""
         store_consensus_analysis(
             debate_id,
             consensus_data["consensus_score"],
-            consensus_data["semantic_alignment"] / 100.0,  # Convert back to 0-1
+            consensus_data["semantic_alignment"] / 100.0,
             consensus_data["agreement_ratio"] / 100.0,
             consensus_data["convergence_score"] / 100.0,
             consensus_data["resolution_rate"] / 100.0,
